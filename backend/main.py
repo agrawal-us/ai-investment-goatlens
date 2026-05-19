@@ -86,7 +86,7 @@ from langchain_core.runnables import RunnableLambda, RunnableConfig
 from typing_extensions import TypedDict
 
 # Local imports
-from agents import BuffettAgent, LynchAgent, GrahamAgent, MungerAgent, DalioAgent
+from agents import BuffettAgent, LynchAgent, GrahamAgent, MungerAgent, DalioAgent, BurryAgent
 from data_sources import YahooFinanceClient, YahooFinanceError
 from data_sources import FMPClient
 from data_sources import NewsClient
@@ -308,11 +308,14 @@ class GOATState(TypedDict):
     
     # Agent results
     agent_results: List[Dict[str, Any]]
-    
+
+    # Burry meta-analysis (runs after all 5 agents, before synthesis)
+    burry_result: Optional[Dict[str, Any]]
+
     # Final synthesis
     consensus: Optional[Dict[str, Any]]
     final_report: Optional[Dict[str, Any]]
-    
+
     # Error tracking
     error: Optional[str]
 
@@ -469,7 +472,57 @@ async def run_agents_node(state: GOATState, config: RunnableConfig = None) -> GO
     
     # Collect successful results, skip exceptions
     state["agent_results"] = [r for r in results if not isinstance(r, Exception)]
-    
+
+    return state
+
+
+async def burry_node(state: GOATState, config: RunnableConfig = None) -> GOATState:
+    """
+    Node: Run the Michael Burry contrarian meta-agent.
+
+    Runs after all 5 GOAT agents complete. Receives their verdicts, scores,
+    insights, and concerns in addition to raw financial data. Only fires
+    contrarian signals when specific quantitative thresholds are met.
+
+    Args:
+        config: LangGraph RunnableConfig — threaded to Burry's LLM calls
+                so spans nest under the main chain trace in Arize.
+    """
+    if state.get("error"):
+        return state
+
+    ticker = state["ticker"]
+    financials = state["normalized_data"]
+    agent_results = state["agent_results"]
+    earnings_data = state.get("earnings_data") or []
+    earnings_streak = state.get("earnings_streak") or {}
+
+    has_llm = bool(os.getenv("OPENAI_API_KEY"))
+    burry = BurryAgent(
+        llm_client=get_llm_client(BurryAgent.model_preference) if has_llm else None
+    )
+
+    async def _analyze(_, *, config=None):
+        return await burry.analyze(
+            ticker,
+            financials,
+            agent_results=agent_results,
+            earnings_data=earnings_data,
+            earnings_streak=earnings_streak,
+            config=config,
+        )
+
+    result = await (
+        RunnableLambda(_analyze)
+        .with_config({"run_name": "agent.burry"})
+        .ainvoke({"ticker": ticker}, config=config)
+    )
+
+    if isinstance(result, Exception):
+        return state  # Don't fail the whole pipeline if Burry errors
+
+    state["agent_results"] = list(agent_results) + [result]
+    state["burry_result"] = result
     return state
 
 
@@ -568,28 +621,31 @@ async def synthesize_node(state: GOATState, config: RunnableConfig = None) -> GO
 def build_goat_workflow() -> StateGraph:
     """
     Build the LangGraph workflow for GOAT analysis.
-    
+
     Flow:
-    1. Fetch Data (FMP API)
+    1. Fetch Data (Yahoo Finance / FMP)
     2. Temporal Analysis
-    3. Run GOAT Agents (parallel)
-    4. Synthesize Results
+    3. Run GOAT Agents (parallel — Buffett, Lynch, Graham, Munger, Dalio)
+    4. Burry Meta-Analysis (contrarian review of agent outputs + financials)
+    5. Synthesize Results
     """
     workflow = StateGraph(GOATState)
-    
+
     # Add nodes
     workflow.add_node("fetch_data", fetch_data_node)
     workflow.add_node("temporal_analysis", temporal_analysis_node)
     workflow.add_node("run_agents", run_agents_node)
+    workflow.add_node("burry", burry_node)
     workflow.add_node("synthesize", synthesize_node)
-    
+
     # Define edges
     workflow.set_entry_point("fetch_data")
     workflow.add_edge("fetch_data", "temporal_analysis")
     workflow.add_edge("temporal_analysis", "run_agents")
-    workflow.add_edge("run_agents", "synthesize")
+    workflow.add_edge("run_agents", "burry")
+    workflow.add_edge("burry", "synthesize")
     workflow.add_edge("synthesize", END)
-    
+
     return workflow.compile()
 
 
@@ -741,6 +797,7 @@ async def analyze_company(request: AnalysisRequest):
         "rag_context": None,
         "temporal_results": None,
         "agent_results": [],
+        "burry_result": None,
         "consensus": None,
         "final_report": None,
         "error": None,
