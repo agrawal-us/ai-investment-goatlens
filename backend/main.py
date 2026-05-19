@@ -297,6 +297,9 @@ class GOATState(TypedDict):
     # Next earnings date (fetched once in fetch_data_node, shared across nodes)
     next_earnings_date: Optional[str]
     
+    # Recent news headlines (fetched once, passed to all agents as LLM context)
+    recent_news: Optional[List[Dict[str, Any]]]
+
     # News sentiment (optional tool - agents decide when to use it)
     news_sentiment: Optional[Dict[str, Any]]
     
@@ -385,6 +388,19 @@ async def fetch_data_node(state: GOATState) -> GOATState:
     return state
 
 
+async def fetch_news_node(state: GOATState) -> GOATState:
+    """Node: Fetch recent news headlines for LLM agent context."""
+    if state.get("error"):
+        return state
+    try:
+        async with YahooFinanceClient() as client:
+            news = await client.get_recent_news(state["ticker"])
+        state["recent_news"] = news or []
+    except Exception:
+        state["recent_news"] = []
+    return state
+
+
 async def temporal_analysis_node(state: GOATState) -> GOATState:
     """
     Node: Calculate moat strength/trend based on time period.
@@ -438,7 +454,8 @@ async def run_agents_node(state: GOATState, config: RunnableConfig = None) -> GO
     selected = state["selected_agents"]
     earnings_data = state.get("earnings_data") or []
     earnings_streak = state.get("earnings_streak") or {}
-    
+    recent_news = state.get("recent_news") or []
+
     # Build agents: single loop handles both LLM and rule-based modes
     has_llm = bool(os.getenv("OPENAI_API_KEY"))
     all_agents = {
@@ -448,10 +465,10 @@ async def run_agents_node(state: GOATState, config: RunnableConfig = None) -> GO
         )
         for name, cls in AGENT_REGISTRY
     }
-    
+
     # Filter to selected agents (or use all)
     agents = {k: v for k, v in all_agents.items() if k in selected} if selected else all_agents
-    
+
     # Wrap each agent in a RunnableLambda so the LangChain instrumentor
     # creates a named span. Config flows through automatically, linking
     # the ChatOpenAI child span via parent_run_id.
@@ -462,6 +479,7 @@ async def run_agents_node(state: GOATState, config: RunnableConfig = None) -> GO
                 ticker, financials,
                 earnings_data=earnings_data,
                 earnings_streak=earnings_streak,
+                recent_news=recent_news,
                 config=config,
             )
         
@@ -496,6 +514,7 @@ async def burry_node(state: GOATState, config: RunnableConfig = None) -> GOATSta
     agent_results = state["agent_results"]
     earnings_data = state.get("earnings_data") or []
     earnings_streak = state.get("earnings_streak") or {}
+    recent_news = state.get("recent_news") or []
 
     has_llm = bool(os.getenv("OPENAI_API_KEY"))
     burry = BurryAgent(
@@ -509,6 +528,7 @@ async def burry_node(state: GOATState, config: RunnableConfig = None) -> GOATSta
             agent_results=agent_results,
             earnings_data=earnings_data,
             earnings_streak=earnings_streak,
+            recent_news=recent_news,
             config=config,
         )
 
@@ -633,6 +653,7 @@ def build_goat_workflow() -> StateGraph:
 
     # Add nodes
     workflow.add_node("fetch_data", fetch_data_node)
+    workflow.add_node("fetch_news", fetch_news_node)
     workflow.add_node("temporal_analysis", temporal_analysis_node)
     workflow.add_node("run_agents", run_agents_node)
     workflow.add_node("burry", burry_node)
@@ -640,7 +661,8 @@ def build_goat_workflow() -> StateGraph:
 
     # Define edges
     workflow.set_entry_point("fetch_data")
-    workflow.add_edge("fetch_data", "temporal_analysis")
+    workflow.add_edge("fetch_data", "fetch_news")
+    workflow.add_edge("fetch_news", "temporal_analysis")
     workflow.add_edge("temporal_analysis", "run_agents")
     workflow.add_edge("run_agents", "burry")
     workflow.add_edge("burry", "synthesize")
@@ -793,6 +815,7 @@ async def analyze_company(request: AnalysisRequest):
         "earnings_data": None,
         "earnings_streak": None,
         "next_earnings_date": None,
+        "recent_news": None,
         "news_sentiment": None,
         "rag_context": None,
         "temporal_results": None,
