@@ -63,6 +63,7 @@ AGENT_EMOJI = {
     "Benjamin Graham": "📚",
     "Charlie Munger":  "🧠",
     "Ray Dalio":       "🌊",
+    "Michael Burry":   "🔍",
 }
 
 MOAT_EMOJI = {
