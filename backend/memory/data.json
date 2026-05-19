@@ -1,48 +1,12 @@
 {
   "agent_preferences": {
-    "buffett": 7,
-    "lynch": 7,
-    "graham": 7,
-    "munger": 7,
-    "dalio": 7
+    "buffett": 9,
+    "lynch": 9,
+    "graham": 9,
+    "munger": 9,
+    "dalio": 9
   },
   "analyses": [
-    {
-      "ticker": "AAPL",
-      "timestamp": "2026-05-18T17:11:59.878868",
-      "consensus_verdict": "buy",
-      "consensus_score": 0.0,
-      "selected_agents": [
-        "buffett",
-        "lynch",
-        "graham",
-        "munger",
-        "dalio"
-      ],
-      "key_metrics": {
-        "pe_ratio": 36.05811,
-        "roe": 1.4147099,
-        "profit_margin": 0.27152002
-      }
-    },
-    {
-      "ticker": "SATS",
-      "timestamp": "2026-05-18T17:22:24.083058",
-      "consensus_verdict": "sell",
-      "consensus_score": 0.0,
-      "selected_agents": [
-        "buffett",
-        "lynch",
-        "graham",
-        "munger",
-        "dalio"
-      ],
-      "key_metrics": {
-        "pe_ratio": -1196.9298,
-        "roe": -1.1228399,
-        "profit_margin": -0.97559
-      }
-    },
     {
       "ticker": "MU",
       "timestamp": "2026-05-18T17:24:28.357975",
@@ -95,6 +59,42 @@
         "pe_ratio": 22.225819,
         "roe": 0.32930002,
         "profit_margin": 0.32837
+      }
+    },
+    {
+      "ticker": "META",
+      "timestamp": "2026-05-19T12:01:28.364222",
+      "consensus_verdict": "buy",
+      "consensus_score": 0.0,
+      "selected_agents": [
+        "buffett",
+        "lynch",
+        "graham",
+        "munger",
+        "dalio"
+      ],
+      "key_metrics": {
+        "pe_ratio": 21.92982,
+        "roe": 0.32930002,
+        "profit_margin": 0.32837
+      }
+    },
+    {
+      "ticker": "NVDA",
+      "timestamp": "2026-05-19T12:02:15.672902",
+      "consensus_verdict": "buy",
+      "consensus_score": 0.0,
+      "selected_agents": [
+        "buffett",
+        "lynch",
+        "graham",
+        "munger",
+        "dalio"
+      ],
+      "key_metrics": {
+        "pe_ratio": 45.17996,
+        "roe": 1.01485,
+        "profit_margin": 0.55603004
       }
     }
   ]

@@ -75,6 +75,7 @@ class BurryAgent:
         agent_results: List[Dict[str, Any]],
         earnings_data: Optional[List[Dict]] = None,
         earnings_streak: Optional[Dict] = None,
+        recent_news: Optional[List[Dict]] = None,
         config: dict = None,
     ) -> Dict[str, Any]:
         """
@@ -86,6 +87,7 @@ class BurryAgent:
             agent_results: Outputs from all 5 existing agents (verdicts, scores, insights, concerns)
             earnings_data: List of quarterly earnings (actual vs estimate)
             earnings_streak: Streak summary dict
+            recent_news: Recent news headlines for LLM context
             config: LangChain RunnableConfig for trace propagation
 
         Returns:
@@ -100,10 +102,12 @@ class BurryAgent:
 
         if self.llm_client:
             insights = await self._generate_llm_insights(
-                ticker, metrics, triggers, agent_results, score, verdict, config=config
+                ticker, metrics, triggers, agent_results, score, verdict,
+                recent_news=recent_news, config=config,
             )
             concerns = await self._generate_llm_concerns(
-                ticker, metrics, triggers, agent_results, score, verdict, config=config
+                ticker, metrics, triggers, agent_results, score, verdict,
+                recent_news=recent_news, config=config,
             )
         else:
             insights = self._generate_insights(metrics, triggers, agent_results)
@@ -257,6 +261,8 @@ class BurryAgent:
         agent_results: List[Dict[str, Any]],
         score: float,
         verdict: str,
+        *,
+        recent_news: Optional[List[Dict]] = None,
         config: dict = None,
     ) -> List[str]:
         agent_summary = self._build_agent_summary(agent_results)
@@ -274,6 +280,14 @@ class BurryAgent:
                 f"The numbers check out — no major red flags. In 1-2 sentences, acknowledge the "
                 f"consensus and note one understated risk worth watching, even if not a dealbreaker."
             )
+        if recent_news:
+            news_lines = ["Recent News (last 10 items):"]
+            for item in recent_news:
+                line = f"- {item['headline']} — {item['source']}, {item['published']}"
+                if item.get("summary"):
+                    line += f"\n  {item['summary']}"
+                news_lines.append(line)
+            prompt += "\n\n" + "\n".join(news_lines)
         try:
             response = await self.llm_client.analyze(
                 prompt, persona="Michael Burry", verdict=verdict, config=config
@@ -292,6 +306,8 @@ class BurryAgent:
         agent_results: List[Dict[str, Any]],
         score: float,
         verdict: str,
+        *,
+        recent_news: Optional[List[Dict]] = None,
         config: dict = None,
     ) -> List[str]:
         if triggers:
@@ -306,6 +322,14 @@ class BurryAgent:
                 f"For {ticker}, the fundamentals look acceptable. In 1-2 sentences, name one "
                 f"tail risk that could invalidate the bull case — something subtle, not obvious."
             )
+        if recent_news:
+            news_lines = ["Recent News (last 10 items):"]
+            for item in recent_news:
+                line = f"- {item['headline']} — {item['source']}, {item['published']}"
+                if item.get("summary"):
+                    line += f"\n  {item['summary']}"
+                news_lines.append(line)
+            prompt += "\n\n" + "\n".join(news_lines)
         try:
             response = await self.llm_client.analyze(
                 prompt, persona="Michael Burry", verdict=verdict, config=config
