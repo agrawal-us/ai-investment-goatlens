@@ -1,0 +1,101 @@
+{
+  "agent_preferences": {
+    "buffett": 5,
+    "lynch": 5,
+    "graham": 5,
+    "munger": 5,
+    "dalio": 5
+  },
+  "analyses": [
+    {
+      "ticker": "AAPL",
+      "timestamp": "2026-05-18T16:33:53.823664",
+      "consensus_verdict": "buy",
+      "consensus_score": 0.0,
+      "selected_agents": [
+        "buffett",
+        "lynch",
+        "graham",
+        "munger",
+        "dalio"
+      ],
+      "key_metrics": {
+        "pe_ratio": 36.05811,
+        "roe": 1.4147099,
+        "profit_margin": 0.27152002
+      }
+    },
+    {
+      "ticker": "AAPL",
+      "timestamp": "2026-05-18T17:05:19.014735",
+      "consensus_verdict": "buy",
+      "consensus_score": 0.0,
+      "selected_agents": [
+        "buffett",
+        "lynch",
+        "graham",
+        "munger",
+        "dalio"
+      ],
+      "key_metrics": {
+        "pe_ratio": 36.05811,
+        "roe": 1.4147099,
+        "profit_margin": 0.27152002
+      }
+    },
+    {
+      "ticker": "AAPL",
+      "timestamp": "2026-05-18T17:11:59.878868",
+      "consensus_verdict": "buy",
+      "consensus_score": 0.0,
+      "selected_agents": [
+        "buffett",
+        "lynch",
+        "graham",
+        "munger",
+        "dalio"
+      ],
+      "key_metrics": {
+        "pe_ratio": 36.05811,
+        "roe": 1.4147099,
+        "profit_margin": 0.27152002
+      }
+    },
+    {
+      "ticker": "SATS",
+      "timestamp": "2026-05-18T17:22:24.083058",
+      "consensus_verdict": "sell",
+      "consensus_score": 0.0,
+      "selected_agents": [
+        "buffett",
+        "lynch",
+        "graham",
+        "munger",
+        "dalio"
+      ],
+      "key_metrics": {
+        "pe_ratio": -1196.9298,
+        "roe": -1.1228399,
+        "profit_margin": -0.97559
+      }
+    },
+    {
+      "ticker": "MU",
+      "timestamp": "2026-05-18T17:24:28.357975",
+      "consensus_verdict": "buy",
+      "consensus_score": 0.0,
+      "selected_agents": [
+        "buffett",
+        "lynch",
+        "graham",
+        "munger",
+        "dalio"
+      ],
+      "key_metrics": {
+        "pe_ratio": 32.208885,
+        "roe": 0.39823002,
+        "profit_margin": 0.41486
+      }
+    }
+  ]
+}
