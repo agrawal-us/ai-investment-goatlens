@@ -49,6 +49,8 @@ class MungerAgent:
     # But for cost efficiency, using gpt-4o-mini. Can be overridden via env var.
     model_preference = "gpt-4o-mini"
     
+    retrieval_query = "management quality capital allocation pricing decisions business model"
+
     # Munger's quality thresholds
     MIN_GROSS_MARGIN = 0.40  # 40%
     MIN_ROIC = 0.15  # 15%
@@ -82,18 +84,20 @@ class MungerAgent:
         earnings_data: Optional[List[Dict]] = None,
         earnings_streak: Optional[Dict] = None,
         recent_news: Optional[List[Dict]] = None,
+        filing_chunks: Optional[List[str]] = None,
         config: dict = None,
     ) -> Dict[str, Any]:
         """
         Perform Munger-style analysis on a company.
-        
+
         Args:
             ticker: Stock ticker symbol
             financials: Historical financial data
             earnings_data: List of quarterly earnings (actual vs estimate)
             earnings_streak: Streak summary dict
+            filing_chunks: SEC 10-K/10-Q excerpts retrieved via RAG
             config: LangChain RunnableConfig for trace propagation
-            
+
         Returns:
             Analysis result with verdict, score, and insights
         """
@@ -101,18 +105,18 @@ class MungerAgent:
         quality_assessment = self._assess_business_quality(metrics, financials)
         red_flags = self._identify_red_flags(metrics, financials)
         mental_models = self._apply_mental_models(financials)
-        
+
         # Calculate Munger score with earnings quality adjustment
         earnings_adj = self._earnings_quality_adjustment(earnings_data or [], earnings_streak or {})
         score = self._calculate_score(metrics, quality_assessment, red_flags) + earnings_adj
         score = round(max(-100, min(100, score)), 2)
         verdict = self._score_to_verdict(score)
-        
+
         # Generate LLM-powered insights if client available
         if self.llm_client:
             insights = await self._generate_llm_insights(
                 ticker, metrics, quality_assessment, red_flags, score, verdict,
-                recent_news=recent_news, config=config,
+                recent_news=recent_news, filing_chunks=filing_chunks, config=config,
             )
         else:
             insights = self._generate_insights(metrics, quality_assessment)
@@ -337,6 +341,7 @@ class MungerAgent:
         verdict: str,
         *,
         recent_news: Optional[List[Dict]] = None,
+        filing_chunks: Optional[List[str]] = None,
         config: dict = None,
     ) -> List[str]:
         """Generate LLM-powered insights using Munger's voice."""
@@ -355,6 +360,9 @@ class MungerAgent:
                     line += f"\n  {item['summary']}"
                 news_lines.append(line)
             prompt += "\n\n" + "\n".join(news_lines)
+        if filing_chunks:
+            excerpts = "\n\n".join(f"[{i+1}] {chunk}" for i, chunk in enumerate(filing_chunks))
+            prompt += f"\n\nRelevant Filing Excerpts (SEC 10-K/10-Q):\n\n{excerpts}"
         try:
             response = await self.llm_client.analyze(prompt, persona="Charlie Munger", verdict=verdict, config=config)
             return [response] if response else self._generate_insights(metrics, quality_assessment)

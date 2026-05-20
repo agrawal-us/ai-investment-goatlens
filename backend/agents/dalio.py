@@ -48,6 +48,8 @@ class DalioAgent:
     # Model routing: Dalio analyzes macro cycles (complex), but gpt-4o-mini works for now
     model_preference = "gpt-4o-mini"
     
+    retrieval_query = "macro environment debt cycle interest rate sensitivity risk factors"
+
     # Dalio's risk thresholds
     MAX_BETA = 1.5
     MIN_INTEREST_COVERAGE = 3.0
@@ -78,18 +80,20 @@ class DalioAgent:
         earnings_data: Optional[List[Dict]] = None,
         earnings_streak: Optional[Dict] = None,
         recent_news: Optional[List[Dict]] = None,
+        filing_chunks: Optional[List[str]] = None,
         config: dict = None,
     ) -> Dict[str, Any]:
         """
         Perform Dalio-style analysis on a company.
-        
+
         Args:
             ticker: Stock ticker symbol
             financials: Historical financial data
             earnings_data: List of quarterly earnings (actual vs estimate)
             earnings_streak: Streak summary dict
+            filing_chunks: SEC 10-K/10-Q excerpts retrieved via RAG
             config: LangChain RunnableConfig for trace propagation
-            
+
         Returns:
             Analysis result with verdict, score, and insights
         """
@@ -97,18 +101,18 @@ class DalioAgent:
         cycle_analysis = self._analyze_debt_cycle(financials)
         risk_assessment = self._assess_risk_adjusted_returns(metrics, financials)
         macro_positioning = self._analyze_macro_positioning(financials)
-        
+
         # Calculate Dalio score with earnings volatility adjustment
         earnings_adj = self._earnings_predictability_bonus(earnings_data or [], earnings_streak or {})
         score = self._calculate_score(metrics, risk_assessment, cycle_analysis) + earnings_adj
         score = round(max(-100, min(100, score)), 2)
         verdict = self._score_to_verdict(score)
-        
+
         # Generate LLM-powered insights if client available
         if self.llm_client:
             insights = await self._generate_llm_insights(
                 ticker, metrics, cycle_analysis, risk_assessment, score, verdict,
-                recent_news=recent_news, config=config,
+                recent_news=recent_news, filing_chunks=filing_chunks, config=config,
             )
         else:
             insights = self._generate_insights(metrics, cycle_analysis, macro_positioning)
@@ -358,6 +362,7 @@ class DalioAgent:
         verdict: str,
         *,
         recent_news: Optional[List[Dict]] = None,
+        filing_chunks: Optional[List[str]] = None,
         config: dict = None,
     ) -> List[str]:
         """Generate LLM-powered insights using Dalio's voice."""
@@ -376,6 +381,9 @@ class DalioAgent:
                     line += f"\n  {item['summary']}"
                 news_lines.append(line)
             prompt += "\n\n" + "\n".join(news_lines)
+        if filing_chunks:
+            excerpts = "\n\n".join(f"[{i+1}] {chunk}" for i, chunk in enumerate(filing_chunks))
+            prompt += f"\n\nRelevant Filing Excerpts (SEC 10-K/10-Q):\n\n{excerpts}"
         try:
             response = await self.llm_client.analyze(prompt, persona="Ray Dalio", verdict=verdict, config=config)
             return [response] if response else self._generate_insights(metrics, cycle_analysis, {})

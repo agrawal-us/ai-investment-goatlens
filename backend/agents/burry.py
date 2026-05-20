@@ -63,6 +63,7 @@ class BurryAgent:
     name = "Michael Burry"
     style = "Contrarian Deep Value"
     model_preference = "gpt-4o"
+    retrieval_query = "risk factors debt obligations going concern liquidity covenant violations"
 
     def __init__(self, llm_client: Optional[Any] = None):
         self.llm_client = llm_client
@@ -76,6 +77,7 @@ class BurryAgent:
         earnings_data: Optional[List[Dict]] = None,
         earnings_streak: Optional[Dict] = None,
         recent_news: Optional[List[Dict]] = None,
+        filing_chunks: Optional[List[str]] = None,
         config: dict = None,
     ) -> Dict[str, Any]:
         """
@@ -88,6 +90,7 @@ class BurryAgent:
             earnings_data: List of quarterly earnings (actual vs estimate)
             earnings_streak: Streak summary dict
             recent_news: Recent news headlines for LLM context
+            filing_chunks: SEC 10-K/10-Q excerpts retrieved via RAG
             config: LangChain RunnableConfig for trace propagation
 
         Returns:
@@ -103,11 +106,11 @@ class BurryAgent:
         if self.llm_client:
             insights = await self._generate_llm_insights(
                 ticker, metrics, triggers, agent_results, score, verdict,
-                recent_news=recent_news, config=config,
+                recent_news=recent_news, filing_chunks=filing_chunks, config=config,
             )
             concerns = await self._generate_llm_concerns(
                 ticker, metrics, triggers, agent_results, score, verdict,
-                recent_news=recent_news, config=config,
+                recent_news=recent_news, filing_chunks=filing_chunks, config=config,
             )
         else:
             insights = self._generate_insights(metrics, triggers, agent_results)
@@ -263,6 +266,7 @@ class BurryAgent:
         verdict: str,
         *,
         recent_news: Optional[List[Dict]] = None,
+        filing_chunks: Optional[List[str]] = None,
         config: dict = None,
     ) -> List[str]:
         agent_summary = self._build_agent_summary(agent_results)
@@ -288,6 +292,9 @@ class BurryAgent:
                     line += f"\n  {item['summary']}"
                 news_lines.append(line)
             prompt += "\n\n" + "\n".join(news_lines)
+        if filing_chunks:
+            excerpts = "\n\n".join(f"[{i+1}] {chunk}" for i, chunk in enumerate(filing_chunks))
+            prompt += f"\n\nRelevant Filing Excerpts (SEC 10-K/10-Q):\n\n{excerpts}"
         try:
             response = await self.llm_client.analyze(
                 prompt, persona="Michael Burry", verdict=verdict, config=config
@@ -308,6 +315,7 @@ class BurryAgent:
         verdict: str,
         *,
         recent_news: Optional[List[Dict]] = None,
+        filing_chunks: Optional[List[str]] = None,
         config: dict = None,
     ) -> List[str]:
         if triggers:
@@ -330,6 +338,9 @@ class BurryAgent:
                     line += f"\n  {item['summary']}"
                 news_lines.append(line)
             prompt += "\n\n" + "\n".join(news_lines)
+        if filing_chunks:
+            excerpts = "\n\n".join(f"[{i+1}] {chunk}" for i, chunk in enumerate(filing_chunks))
+            prompt += f"\n\nRelevant Filing Excerpts (SEC 10-K/10-Q):\n\n{excerpts}"
         try:
             response = await self.llm_client.analyze(
                 prompt, persona="Michael Burry", verdict=verdict, config=config

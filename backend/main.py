@@ -300,6 +300,10 @@ class GOATState(TypedDict):
     # Recent news headlines (fetched once, passed to all agents as LLM context)
     recent_news: Optional[List[Dict[str, Any]]]
 
+    # SEC EDGAR RAG
+    filings_indexed: Optional[bool]
+    filings_metadata: Optional[Dict[str, Any]]
+
     # News sentiment (optional tool - agents decide when to use it)
     news_sentiment: Optional[Dict[str, Any]]
     
@@ -401,6 +405,27 @@ async def fetch_news_node(state: GOATState) -> GOATState:
     return state
 
 
+async def retrieve_filings_node(state: GOATState) -> GOATState:
+    """Node: Index SEC 10-K/10-Q filings for the ticker into Postgres (pgvector)."""
+    if state.get("error"):
+        return state
+    ticker = state["ticker"]
+    try:
+        from data_sources.edgar import EDGARClient
+        client = EDGARClient()
+        metadata = await client.index_filings(ticker)
+        if metadata:
+            state["filings_indexed"] = True
+            state["filings_metadata"] = metadata
+        else:
+            state["filings_indexed"] = False
+            state["filings_metadata"] = None
+    except Exception:
+        state["filings_indexed"] = False
+        state["filings_metadata"] = None
+    return state
+
+
 async def temporal_analysis_node(state: GOATState) -> GOATState:
     """
     Node: Calculate moat strength/trend based on time period.
@@ -448,13 +473,20 @@ async def run_agents_node(state: GOATState, config: RunnableConfig = None) -> GO
     """
     if state.get("error"):
         return state
-    
+
+    import openai as _openai
+    from db.postgres import search_similar
+
     ticker = state["ticker"]
     financials = state["normalized_data"]
     selected = state["selected_agents"]
     earnings_data = state.get("earnings_data") or []
     earnings_streak = state.get("earnings_streak") or {}
     recent_news = state.get("recent_news") or []
+    filings_indexed = state.get("filings_indexed", False)
+
+    # One embedding client shared across all agent closure calls this node
+    embed_client = _openai.AsyncOpenAI()
 
     # Build agents: single loop handles both LLM and rule-based modes
     has_llm = bool(os.getenv("OPENAI_API_KEY"))
@@ -475,19 +507,30 @@ async def run_agents_node(state: GOATState, config: RunnableConfig = None) -> GO
     tasks = []
     for name, agent in agents.items():
         async def _analyze(_, *, _agent=agent, config=None):
+            filing_chunks = None
+            if filings_indexed:
+                try:
+                    resp = await embed_client.embeddings.create(
+                        model="text-embedding-3-small", input=_agent.retrieval_query
+                    )
+                    chunks = await search_similar(resp.data[0].embedding, ticker)
+                    filing_chunks = chunks or None
+                except Exception:
+                    filing_chunks = None
             return await _agent.analyze(
                 ticker, financials,
                 earnings_data=earnings_data,
                 earnings_streak=earnings_streak,
                 recent_news=recent_news,
+                filing_chunks=filing_chunks,
                 config=config,
             )
-        
+
         runnable = RunnableLambda(_analyze).with_config({"run_name": f"agent.{name}"})
         tasks.append(runnable.ainvoke({"ticker": ticker, "agent": name}, config=config))
-    
+
     results = await asyncio.gather(*tasks, return_exceptions=True)
-    
+
     # Collect successful results, skip exceptions
     state["agent_results"] = [r for r in results if not isinstance(r, Exception)]
 
@@ -509,19 +552,35 @@ async def burry_node(state: GOATState, config: RunnableConfig = None) -> GOATSta
     if state.get("error"):
         return state
 
+    import openai as _openai
+    from db.postgres import search_similar
+
     ticker = state["ticker"]
     financials = state["normalized_data"]
     agent_results = state["agent_results"]
     earnings_data = state.get("earnings_data") or []
     earnings_streak = state.get("earnings_streak") or {}
     recent_news = state.get("recent_news") or []
+    filings_indexed = state.get("filings_indexed", False)
 
     has_llm = bool(os.getenv("OPENAI_API_KEY"))
     burry = BurryAgent(
         llm_client=get_llm_client(BurryAgent.model_preference) if has_llm else None
     )
 
+    embed_client = _openai.AsyncOpenAI()
+
     async def _analyze(_, *, config=None):
+        filing_chunks = None
+        if filings_indexed:
+            try:
+                resp = await embed_client.embeddings.create(
+                    model="text-embedding-3-small", input=BurryAgent.retrieval_query
+                )
+                chunks = await search_similar(resp.data[0].embedding, ticker)
+                filing_chunks = chunks or None
+            except Exception:
+                filing_chunks = None
         return await burry.analyze(
             ticker,
             financials,
@@ -529,6 +588,7 @@ async def burry_node(state: GOATState, config: RunnableConfig = None) -> GOATSta
             earnings_data=earnings_data,
             earnings_streak=earnings_streak,
             recent_news=recent_news,
+            filing_chunks=filing_chunks,
             config=config,
         )
 
@@ -654,6 +714,7 @@ def build_goat_workflow() -> StateGraph:
     # Add nodes
     workflow.add_node("fetch_data", fetch_data_node)
     workflow.add_node("fetch_news", fetch_news_node)
+    workflow.add_node("retrieve_filings", retrieve_filings_node)
     workflow.add_node("temporal_analysis", temporal_analysis_node)
     workflow.add_node("run_agents", run_agents_node)
     workflow.add_node("burry", burry_node)
@@ -662,7 +723,8 @@ def build_goat_workflow() -> StateGraph:
     # Define edges
     workflow.set_entry_point("fetch_data")
     workflow.add_edge("fetch_data", "fetch_news")
-    workflow.add_edge("fetch_news", "temporal_analysis")
+    workflow.add_edge("fetch_news", "retrieve_filings")
+    workflow.add_edge("retrieve_filings", "temporal_analysis")
     workflow.add_edge("temporal_analysis", "run_agents")
     workflow.add_edge("run_agents", "burry")
     workflow.add_edge("burry", "synthesize")
@@ -682,6 +744,8 @@ goat_workflow = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
+    from db.postgres import create_tables
+    await create_tables()
     global goat_workflow
     goat_workflow = build_goat_workflow()
     yield
