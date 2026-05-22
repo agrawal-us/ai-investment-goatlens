@@ -3,6 +3,7 @@
 .gitignore
 .env
 .env.*
+venv/
 backend/venv/
 backend/.venv/
 __pycache__/

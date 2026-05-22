@@ -44,7 +44,8 @@ class BuffettAgent:
     
     name = "Warren Buffett"
     style = "Value Investing with Quality Focus"
-    
+    retrieval_query = "competitive advantage pricing power moat durability owner earnings"
+
     # Model routing: Buffett needs nuanced reasoning for moat analysis
     # Use gpt-4o for better quality, gpt-4o-mini for cost efficiency
     model_preference = "gpt-4o"  # Can be overridden via env var
@@ -71,6 +72,7 @@ class BuffettAgent:
         earnings_data: Optional[List[Dict]] = None,
         earnings_streak: Optional[Dict] = None,
         recent_news: Optional[List[Dict]] = None,
+        filing_chunks: Optional[List[str]] = None,
         config: dict = None,
     ) -> Dict[str, Any]:
         """
@@ -82,6 +84,7 @@ class BuffettAgent:
             earnings_data: List of quarterly earnings (actual vs estimate)
             earnings_streak: Streak summary dict
             recent_news: Recent news headlines for LLM context
+            filing_chunks: Relevant SEC filing excerpts for grounding
             config: LangChain RunnableConfig for trace propagation
 
         Returns:
@@ -100,7 +103,8 @@ class BuffettAgent:
         # Generate LLM-powered insights if client available
         if self.llm_client:
             insights = await self._generate_llm_insights(
-                ticker, metrics, score, verdict, recent_news=recent_news, config=config
+                ticker, metrics, score, verdict,
+                recent_news=recent_news, filing_chunks=filing_chunks, config=config,
             )
         else:
             insights = self._generate_insights(metrics, moat_analysis)
@@ -252,6 +256,7 @@ class BuffettAgent:
         verdict: str,
         *,
         recent_news: Optional[List[Dict]] = None,
+        filing_chunks: Optional[List[str]] = None,
         config: dict = None,
     ) -> List[str]:
         """Generate LLM-powered insights using Buffett's voice."""
@@ -266,6 +271,9 @@ class BuffettAgent:
                     line += f"\n  {item['summary']}"
                 news_lines.append(line)
             prompt += "\n\n" + "\n".join(news_lines)
+        if filing_chunks:
+            excerpts = "\n\n".join(f"[{i+1}] {chunk}" for i, chunk in enumerate(filing_chunks))
+            prompt += f"\n\nRelevant Filing Excerpts (SEC 10-K/10-Q):\n\n{excerpts}"
         try:
             response = await self.llm_client.analyze(prompt, persona="Warren Buffett", verdict=verdict, config=config)
             return [response] if response else self._generate_insights(metrics, {"strength": metrics.moat_strength})

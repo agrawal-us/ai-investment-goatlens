@@ -291,6 +291,37 @@ def format_analysis_message(data: dict) -> str:
     return "\n".join(lines)
 
 
+def format_agent_detail_message(agent_results: list, ticker: str) -> str:
+    """
+    Second message: per-agent deep dive with insights, concerns, and SEC filing chunks.
+    Kept compact (≤4096 chars) by capping at top-2 insights, top-1 concern, top-1 chunk.
+    """
+    lines = [f"🔬 *{esc(ticker)} — Agent Deep Dive*", ""]
+    for r in agent_results:
+        agent   = r.get("agent", "")
+        emoji   = AGENT_EMOJI.get(agent, "•")
+        verdict = r.get("verdict", "hold")
+        score   = r.get("score", 0)
+        v_label = VERDICT_LABEL.get(verdict, verdict.upper())
+        insights = r.get("insights", [])
+        concerns = r.get("concerns", [])
+        chunks   = r.get("filing_chunk_previews", [])
+
+        lines.append(
+            f"{emoji} *{esc(agent)}* — {esc(v_label)} \\({esc(f'{score:+.0f}')}\\)"
+        )
+        for insight in insights[:2]:
+            lines.append(f"  💡 {esc(insight)}")
+        if concerns:
+            lines.append(f"  ⚠️ {esc(concerns[0])}")
+        if chunks:
+            lines.append(f"  📄 _From SEC filing: {esc(chunks[0])}…_")
+        lines.append("")
+
+    lines.append("━━━━━━━━━━━━━━━━━━━━━")
+    return "\n".join(lines)
+
+
 # ── Command handlers ───────────────────────────────────────────────────────────
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -387,8 +418,13 @@ async def analyze(update: Update, context: ContextTypes.DEFAULT_TYPE):
         message_text = format_analysis_message(analysis_data)
         await update.message.reply_text(message_text, parse_mode="MarkdownV2")
 
-        # ── Charts ─────────────────────────────────────────────────────────────
+        # ── Agent deep dive (insights, concerns, SEC filing chunks) ────────────
         agent_results = analysis_data.get("agent_results", [])
+        if agent_results:
+            detail_text = format_agent_detail_message(agent_results, ticker)
+            await update.message.reply_text(detail_text, parse_mode="MarkdownV2")
+
+        # ── Charts ─────────────────────────────────────────────────────────────
 
         if agent_results:
             scores_buf = build_agent_scores_chart(agent_results)

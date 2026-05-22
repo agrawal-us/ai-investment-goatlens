@@ -44,7 +44,8 @@ class LynchAgent:
     
     name = "Peter Lynch"
     style = "Growth at Reasonable Price (GARP)"
-    
+    retrieval_query = "growth rate new products market expansion revenue drivers"
+
     # Model routing: Lynch analyzes growth stories, gpt-4o-mini is sufficient
     model_preference = "gpt-4o-mini"
     
@@ -80,36 +81,39 @@ class LynchAgent:
         earnings_data: Optional[List[Dict]] = None,
         earnings_streak: Optional[Dict] = None,
         recent_news: Optional[List[Dict]] = None,
+        filing_chunks: Optional[List[str]] = None,
         config: dict = None,
     ) -> Dict[str, Any]:
         """
         Perform Lynch-style analysis on a company.
-        
+
         Args:
             ticker: Stock ticker symbol
             financials: Historical financial data
             earnings_data: List of quarterly earnings (actual vs estimate)
             earnings_streak: Streak summary dict
+            recent_news: Recent news headlines for LLM context
+            filing_chunks: Relevant SEC filing excerpts for grounding
             config: LangChain RunnableConfig for trace propagation
-            
+
         Returns:
             Analysis result with verdict, score, and insights
         """
         metrics = self._calculate_metrics(financials)
         category = self._categorize_stock(metrics)
         ten_bagger_potential = self._assess_ten_bagger_potential(metrics, financials)
-        
+
         # Calculate Lynch score with earnings momentum bonus
         earnings_bonus = self._earnings_momentum_bonus(earnings_data or [], earnings_streak or {})
         score = self._calculate_score(metrics, category, ten_bagger_potential) + earnings_bonus
         score = round(max(-100, min(100, score)), 2)
         verdict = self._score_to_verdict(score)
-        
+
         # Generate LLM-powered insights if client available
         if self.llm_client:
             insights = await self._generate_llm_insights(
                 ticker, metrics, category, ten_bagger_potential, score, verdict,
-                recent_news=recent_news, config=config,
+                recent_news=recent_news, filing_chunks=filing_chunks, config=config,
             )
         else:
             insights = self._generate_insights(metrics, category)
@@ -281,6 +285,7 @@ class LynchAgent:
         verdict: str,
         *,
         recent_news: Optional[List[Dict]] = None,
+        filing_chunks: Optional[List[str]] = None,
         config: dict = None,
     ) -> List[str]:
         """Generate LLM-powered insights using Lynch's voice."""
@@ -300,6 +305,9 @@ class LynchAgent:
                     line += f"\n  {item['summary']}"
                 news_lines.append(line)
             prompt += "\n\n" + "\n".join(news_lines)
+        if filing_chunks:
+            excerpts = "\n\n".join(f"[{i+1}] {chunk}" for i, chunk in enumerate(filing_chunks))
+            prompt += f"\n\nRelevant Filing Excerpts (SEC 10-K/10-Q):\n\n{excerpts}"
         try:
             response = await self.llm_client.analyze(prompt, persona="Peter Lynch", verdict=verdict, config=config)
             return [response] if response else self._generate_insights(metrics, category)

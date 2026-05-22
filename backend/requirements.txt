@@ -35,3 +35,10 @@ opentelemetry-exporter-otlp>=1.21.0
 openinference-instrumentation-langchain>=0.1.19
 openinference-instrumentation-openai>=0.1.0
 openinference-instrumentation>=0.1.12
+
+# SEC EDGAR RAG
+edgartools>=5.0.0
+pgvector>=0.2.0
+psycopg2-binary>=2.9.0
+sqlalchemy[asyncio]>=2.0.0
+asyncpg>=0.29.0
