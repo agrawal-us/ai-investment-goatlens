@@ -122,6 +122,7 @@ class AgentResult(BaseModel):
     score: float
     insights: List[str]
     concerns: List[str]
+    filing_chunk_previews: List[str] = Field(default_factory=list)
 
 
 class EarningsQuarter(BaseModel):
@@ -300,6 +301,10 @@ class GOATState(TypedDict):
     # Recent news headlines (fetched once, passed to all agents as LLM context)
     recent_news: Optional[List[Dict[str, Any]]]
 
+    # SEC EDGAR RAG
+    filings_indexed: Optional[bool]
+    filings_metadata: Optional[Dict[str, Any]]
+
     # News sentiment (optional tool - agents decide when to use it)
     news_sentiment: Optional[Dict[str, Any]]
     
@@ -401,6 +406,28 @@ async def fetch_news_node(state: GOATState) -> GOATState:
     return state
 
 
+async def retrieve_filings_node(state: GOATState) -> GOATState:
+    """Node: Fetch, chunk, embed, and cache SEC 10-K/10-Q filings in Postgres+pgvector."""
+    print(f'[EDGAR] Node entered for {state.get("ticker")}')
+    if state.get("error"):
+        print(f'[EDGAR] Skipping — error in state: {state.get("error")}')
+        return state
+    ticker = state["ticker"]
+    print(f"[EDGAR] Starting filing retrieval for {ticker}")
+    try:
+        from data_sources.edgar import EDGARClient
+        client = EDGARClient()
+        metadata = await client.index_filings(ticker)
+        if metadata:
+            print(f"[EDGAR] filings_indexed: True, chunks: {metadata.get('total_chunks', 0)}")
+            return {**state, "filings_indexed": True, "filings_metadata": metadata}
+        print(f"[EDGAR] filings_indexed: False, chunks: 0")
+        return {**state, "filings_indexed": False, "filings_metadata": None}
+    except Exception:
+        print(f"[EDGAR] filings_indexed: False, chunks: 0")
+        return {**state, "filings_indexed": False, "filings_metadata": None}
+
+
 async def temporal_analysis_node(state: GOATState) -> GOATState:
     """
     Node: Calculate moat strength/trend based on time period.
@@ -448,13 +475,18 @@ async def run_agents_node(state: GOATState, config: RunnableConfig = None) -> GO
     """
     if state.get("error"):
         return state
-    
+
+    import openai as _openai
+    from db.postgres import search_similar
+
     ticker = state["ticker"]
     financials = state["normalized_data"]
     selected = state["selected_agents"]
     earnings_data = state.get("earnings_data") or []
     earnings_streak = state.get("earnings_streak") or {}
     recent_news = state.get("recent_news") or []
+    filings_indexed = state.get("filings_indexed", False)
+    embed_client = _openai.AsyncOpenAI()
 
     # Build agents: single loop handles both LLM and rule-based modes
     has_llm = bool(os.getenv("OPENAI_API_KEY"))
@@ -475,14 +507,31 @@ async def run_agents_node(state: GOATState, config: RunnableConfig = None) -> GO
     tasks = []
     for name, agent in agents.items():
         async def _analyze(_, *, _agent=agent, config=None):
-            return await _agent.analyze(
+            chunks = []
+            if filings_indexed:
+                try:
+                    resp = await embed_client.embeddings.create(
+                        model="text-embedding-3-small", input=_agent.retrieval_query
+                    )
+                    chunks = await search_similar(resp.data[0].embedding, ticker)
+                except Exception:
+                    chunks = []
+            if chunks:
+                previews = " | ".join(c[:60].replace("\n", " ") for c in chunks)
+                print(f"[RAG] {_agent.name} retrieved {len(chunks)} chunks: {previews}")
+            else:
+                print(f"[RAG] {_agent.name} retrieved 0 chunks")
+            result = await _agent.analyze(
                 ticker, financials,
                 earnings_data=earnings_data,
                 earnings_streak=earnings_streak,
                 recent_news=recent_news,
+                filing_chunks=chunks or None,
                 config=config,
             )
-        
+            result["filing_chunk_previews"] = [c[:100] for c in chunks] if chunks else []
+            return result
+
         runnable = RunnableLambda(_analyze).with_config({"run_name": f"agent.{name}"})
         tasks.append(runnable.ainvoke({"ticker": ticker, "agent": name}, config=config))
     
@@ -509,33 +558,55 @@ async def burry_node(state: GOATState, config: RunnableConfig = None) -> GOATSta
     if state.get("error"):
         return state
 
+    import openai as _openai
+    from db.postgres import search_similar
+
     ticker = state["ticker"]
     financials = state["normalized_data"]
     agent_results = state["agent_results"]
     earnings_data = state.get("earnings_data") or []
     earnings_streak = state.get("earnings_streak") or {}
     recent_news = state.get("recent_news") or []
+    filings_indexed = state.get("filings_indexed", False)
+    embed_client = _openai.AsyncOpenAI()
 
     has_llm = bool(os.getenv("OPENAI_API_KEY"))
-    burry = BurryAgent(
+    burry_agent = BurryAgent(
         llm_client=get_llm_client(BurryAgent.model_preference) if has_llm else None
     )
 
     async def _analyze(_, *, config=None):
-        return await burry.analyze(
+        chunks = []
+        if filings_indexed:
+            try:
+                resp = await embed_client.embeddings.create(
+                    model="text-embedding-3-small", input=burry_agent.retrieval_query
+                )
+                chunks = await search_similar(resp.data[0].embedding, ticker)
+            except Exception:
+                chunks = []
+        if chunks:
+            previews = " | ".join(c[:60].replace("\n", " ") for c in chunks)
+            print(f"[RAG] {burry_agent.name} retrieved {len(chunks)} chunks: {previews}")
+        else:
+            print(f"[RAG] {burry_agent.name} retrieved 0 chunks")
+        result = await burry_agent.analyze(
             ticker,
             financials,
             agent_results=agent_results,
             earnings_data=earnings_data,
             earnings_streak=earnings_streak,
             recent_news=recent_news,
+            filing_chunks=chunks or None,
             config=config,
         )
+        result["filing_chunk_previews"] = [c[:100] for c in chunks] if chunks else []
+        return result
 
     result = await (
         RunnableLambda(_analyze)
         .with_config({"run_name": "agent.burry"})
-        .ainvoke({"ticker": ticker}, config=config)
+        .ainvoke({"ticker": ticker, "agent": "burry"}, config=config)
     )
 
     if isinstance(result, Exception):
@@ -654,6 +725,7 @@ def build_goat_workflow() -> StateGraph:
     # Add nodes
     workflow.add_node("fetch_data", fetch_data_node)
     workflow.add_node("fetch_news", fetch_news_node)
+    workflow.add_node("retrieve_filings", retrieve_filings_node)
     workflow.add_node("temporal_analysis", temporal_analysis_node)
     workflow.add_node("run_agents", run_agents_node)
     workflow.add_node("burry", burry_node)
@@ -662,7 +734,8 @@ def build_goat_workflow() -> StateGraph:
     # Define edges
     workflow.set_entry_point("fetch_data")
     workflow.add_edge("fetch_data", "fetch_news")
-    workflow.add_edge("fetch_news", "temporal_analysis")
+    workflow.add_edge("fetch_news", "retrieve_filings")
+    workflow.add_edge("retrieve_filings", "temporal_analysis")
     workflow.add_edge("temporal_analysis", "run_agents")
     workflow.add_edge("run_agents", "burry")
     workflow.add_edge("burry", "synthesize")
@@ -682,6 +755,13 @@ goat_workflow = None
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
+    from db.postgres import create_tables
+    try:
+        await create_tables()
+        print("[DB] ✓ Postgres+pgvector ready — SEC EDGAR RAG enabled")
+    except Exception as e:
+        print(f"[DB] ⚠ Postgres unavailable ({type(e).__name__}: {e})")
+        print("[DB]   SEC EDGAR RAG disabled — set DATABASE_URL and create the 'goatlens' database to enable")
     global goat_workflow
     goat_workflow = build_goat_workflow()
     yield
@@ -816,6 +896,8 @@ async def analyze_company(request: AnalysisRequest):
         "earnings_streak": None,
         "next_earnings_date": None,
         "recent_news": None,
+        "filings_indexed": None,
+        "filings_metadata": None,
         "news_sentiment": None,
         "rag_context": None,
         "temporal_results": None,
@@ -883,6 +965,7 @@ async def analyze_company(request: AnalysisRequest):
                 score=r.get("score", 0),
                 insights=r.get("insights", []),
                 concerns=r.get("concerns", []),
+                filing_chunk_previews=r.get("filing_chunk_previews", []),
             )
             for r in report["agent_results"]
         ],

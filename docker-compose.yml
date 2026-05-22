@@ -1,0 +1,29 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: goatlens
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d goatlens"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  goatlens:
+    build: .
+    ports:
+      - "8000:8000"
+    env_file:
+      - backend/.env
+    environment:
+      # Override the localhost URL from .env with the Docker service name
+      DATABASE_URL: postgresql+asyncpg://postgres:postgres@postgres:5432/goatlens
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:

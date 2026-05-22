@@ -48,7 +48,8 @@ class GrahamAgent:
     
     name = "Benjamin Graham"
     style = "Deep Value / Margin of Safety"
-    
+    retrieval_query = "book value debt repayment dividend policy asset valuation"
+
     # Model routing: Graham is rule-based (P/E, P/B thresholds), gpt-4o-mini is sufficient
     model_preference = "gpt-4o-mini"
     
@@ -101,36 +102,39 @@ class GrahamAgent:
         earnings_data: Optional[List[Dict]] = None,
         earnings_streak: Optional[Dict] = None,
         recent_news: Optional[List[Dict]] = None,
+        filing_chunks: Optional[List[str]] = None,
         config: dict = None,
     ) -> Dict[str, Any]:
         """
         Perform Graham-style analysis on a company.
-        
+
         Args:
             ticker: Stock ticker symbol
             financials: Historical financial data
             earnings_data: List of quarterly earnings (actual vs estimate)
             earnings_streak: Streak summary dict
+            recent_news: Recent news headlines for LLM context
+            filing_chunks: Relevant SEC filing excerpts for grounding
             config: LangChain RunnableConfig for trace propagation
-            
+
         Returns:
             Analysis result with verdict, score, and insights
         """
         metrics = self._calculate_metrics(financials)
         margin_of_safety = self._calculate_margin_of_safety(metrics)
         defensive_criteria = self._check_defensive_criteria(metrics)
-        
+
         # Calculate Graham score with earnings stability bonus
         earnings_bonus = self._earnings_stability_bonus(earnings_data or [], earnings_streak or {})
         score = self._calculate_score(metrics, margin_of_safety, defensive_criteria) + earnings_bonus
         score = round(max(-100, min(100, score)), 2)
         verdict = self._score_to_verdict(score)
-        
+
         # Generate LLM-powered insights if client available
         if self.llm_client:
             insights = await self._generate_llm_insights(
                 ticker, metrics, margin_of_safety, score, verdict,
-                recent_news=recent_news, config=config,
+                recent_news=recent_news, filing_chunks=filing_chunks, config=config,
             )
         else:
             insights = self._generate_insights(metrics, margin_of_safety)
@@ -328,6 +332,7 @@ class GrahamAgent:
         verdict: str,
         *,
         recent_news: Optional[List[Dict]] = None,
+        filing_chunks: Optional[List[str]] = None,
         config: dict = None,
     ) -> List[str]:
         """Generate LLM-powered insights using Graham's voice."""
@@ -345,6 +350,9 @@ class GrahamAgent:
                     line += f"\n  {item['summary']}"
                 news_lines.append(line)
             prompt += "\n\n" + "\n".join(news_lines)
+        if filing_chunks:
+            excerpts = "\n\n".join(f"[{i+1}] {chunk}" for i, chunk in enumerate(filing_chunks))
+            prompt += f"\n\nRelevant Filing Excerpts (SEC 10-K/10-Q):\n\n{excerpts}"
         try:
             response = await self.llm_client.analyze(prompt, persona="Benjamin Graham", verdict=verdict, config=config)
             return [response] if response else self._generate_insights(metrics, margin_of_safety)
